@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Sky Alert Pro</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        body { font-family: -apple-system, sans-serif; margin: 0; background: #0b0e11; color: white; overflow: hidden; }
+        #loginScreen { padding: 40px 20px; text-align: center; height: 100vh; display: flex; flex-direction: column; justify-content: center; }
+        #mainApp { display: flex; flex-direction: column; height: 100vh; }
+        #map { flex-grow: 1; width: 100%; background: #1a1d21; }
+        .controls { padding: 15px; background: #1a1d21; border-top: 2px solid #00cc66; }
+        input { width: 90%; padding: 12px; margin: 10px 0; border-radius: 8px; border: 1px solid #444; background: #0b0e11; color: white; }
+        button { padding: 15px; background: #00cc66; border: none; border-radius: 8px; font-weight: bold; width: 100%; color: #0b0e11; margin-bottom: 5px; }
+        .hidden { display: none; }
+        .status-bar { font-size: 11px; color: #00cc66; margin-bottom: 8px; display: flex; justify-content: space-between; }
+    </style>
+</head>
+<body>
+
+    <div id="loginScreen">
+        <h1>✈️ Sky Radar</h1>
+        <input type="text" id="user" placeholder="OpenSky Username">
+        <input type="password" id="pass" placeholder="OpenSky Password">
+        <button onclick="saveAndStart()">LAUNCH RADAR</button>
+    </div>
+
+    <div id="mainApp" class="hidden">
+        <div id="map"></div>
+        <div class="controls">
+            <div class="status-bar">
+                <span id="notifStatus">Notifications: Checking...</span>
+                <span id="lastUpdate">Last Scan: Never</span>
+            </div>
+            <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                <span>Radius: <b id="radNum" style="color:#00cc66">10</b> km</span>
+                <button style="width: 100px; padding: 8px; background: #444; color: white;" onclick="getLocation()">REFRESH</button>
+            </div>
+            <input type="range" id="radiusInput" min="1" max="50" value="10" oninput="document.getElementById('radNum').innerText=this.value">
+        </div>
+    </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        let credentials = "";
+        let map, userMarker;
+        let planeMarkers = [];
+        let knownPlanes = new Set(); 
+
+        const planeSVG = (heading) => `
+            <svg width="30" height="30" viewBox="0 0 512 512" style="transform: rotate(${heading}deg);">
+                <path fill="#00cc66" d="M448 336v-40L288 192V72c0-39.8-32.2-72-72-72s-72 32.2-72 72v120L32 296v40l160-48v112l-48 32v40l80-24 80 24v-40l-48-32V288l160 48z"/>
+            </svg>`;
+
+        function saveAndStart() {
+            const u = document.getElementById('user').value;
+            const p = document.getElementById('pass').value;
+            if(!u || !p) return alert("Login required");
+            credentials = btoa(u + ":" + p);
+            
+            if ("Notification" in window) {
+                Notification.requestPermission().then(permission => {
+                    document.getElementById('notifStatus').innerText = "Alerts: " + (permission === "granted" ? "ON" : "OFF");
+                });
+            }
+
+            document.getElementById('loginScreen').classList.add('hidden');
+            document.getElementById('mainApp').classList.remove('hidden');
+            
+            map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+            
+            getLocation();
+            
+            // --- NEW: AUTO-REFRESH EVERY 30 SECONDS ---
+            setInterval(() => {
+                getLocation();
+            }, 30000); 
+        }
+
+        function getLocation() {
+            navigator.geolocation.getCurrentPosition(pos => {
+                const { latitude, longitude } = pos.coords;
+                if (!userMarker) {
+                    map.setView([latitude, longitude], 12);
+                    userMarker = L.circleMarker([latitude, longitude], {color: '#3388ff', radius: 10}).addTo(map);
+                } else {
+                    userMarker.setLatLng([latitude, longitude]);
+                }
+                fetchData(latitude, longitude);
+            });
+        }
+
+        async function fetchData(lat, lon) {
+            const km = document.getElementById('radiusInput').value;
+            const offset = km / 111;
+            const url = `https://opensky-network.org/api/states/all?lamin=${lat-offset}&lomin=${lon-offset}&lamax=${lat+offset}&lomax=${lon+offset}`;
+
+            try {
+                const response = await fetch(url, { headers: { 'Authorization': 'Basic ' + credentials } });
+                const data = await response.json();
+                document.getElementById('lastUpdate').innerText = "Last Scan: " + new Date().toLocaleTimeString();
+                updateMap(data.states);
+            } catch (e) { console.error("Update failed"); }
+        }
+
+        function updateMap(states) {
+            planeMarkers.forEach(m => map.removeLayer(m));
+            planeMarkers = [];
+            if (!states) return;
+
+            states.forEach(p => {
+                const callsign = p[1]?.trim() || "Private";
+                const alt = p[7] ? Math.round(p[7] * 3.28) : "Ground";
+                
+                if (p[6] && p[5]) {
+                    const icon = L.divIcon({ html: planeSVG(p[10] || 0), className: 'plane-icon', iconSize: [30, 30], iconAnchor: [15, 15] });
+                    const marker = L.marker([p[6], p[5]], { icon: icon }).addTo(map).bindPopup(callsign);
+                    planeMarkers.push(marker);
+
+                    // Send notification if it's a new plane
+                    if (Notification.permission === "granted" && !knownPlanes.has(callsign)) {
+                        new Notification("Target Identified", { body: `Flight ${callsign} is at ${alt} ft.` });
+                        knownPlanes.add(callsign);
+                    }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
