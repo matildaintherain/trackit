@@ -1,73 +1,67 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>SkyWatch PWA</title>
+    <title>Buzzer Test</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <link rel="manifest" href="manifest.json">
     <style>
-        body { font-family: sans-serif; background: #0b0e11; color: white; text-align: center; padding: 20px; }
-        .card { background: #1a1d21; padding: 20px; border-radius: 15px; border: 1px solid #00cc66; margin-bottom: 20px; }
-        button { width: 100%; padding: 15px; background: #00cc66; border: none; border-radius: 8px; font-weight: bold; margin: 10px 0; }
-        #log { font-size: 12px; color: #888; text-align: left; background: #000; padding: 10px; border-radius: 5px; height: 150px; overflow-y: auto; }
+        body { font-family: sans-serif; text-align: center; padding: 50px 20px; background: #111; color: white; }
+        button { 
+            width: 100%; padding: 20px; font-size: 18px; font-weight: bold;
+            border-radius: 10px; border: none; margin-bottom: 20px; cursor: pointer;
+        }
+        #btnReq { background: #3388ff; color: white; }
+        #btnTest { background: #00cc66; color: black; }
+        #status { margin-top: 20px; color: #888; font-family: monospace; }
     </style>
 </head>
 <body>
 
-    <h1>✈️ SkyWatch</h1>
+    <h2>Notification Debugger</h2>
     
-    <div class="card">
-        <div id="status">App Status: Initializing...</div>
-        <button onclick="requestPermissions()">1. ENABLE ALERTS</button>
-        <button onclick="sendTestNotif()">2. TEST BUZZER</button>
-    </div>
+    <button id="btnReq" onclick="askPermission()">1. GRANT PERMISSION</button>
+    <button id="btnTest" onclick="showNotification()">2. TEST BUZZER</button>
 
-    <div class="card">
-        <h3>Tracking Settings</h3>
-        <p>Scan Radius: 10km</p>
-        <button style="background: #3388ff; color: white;" onclick="startTracking()">3. START AUTO-SCAN</button>
-    </div>
-
-    <div id="log">System Log:</div>
+    <div id="status">Status: Waiting...</div>
 
     <script>
-        const logEl = document.getElementById('log');
-        function print(msg) { logEl.innerHTML += `<br>> ${msg}`; }
+        const statusDiv = document.getElementById('status');
 
-        // Register the Service Worker
-        if ('serviceWorker' in navigator) {
-            navigator.serviceWorker.register('sw.js')
-                .then(() => print("Service Worker Registered"))
-                .catch(err => print("SW Error: " + err));
-        }
-
-        async function requestPermissions() {
-            const loc = await navigator.geolocation.getCurrentPosition(() => print("GPS Access: OK"), (e) => print("GPS Denied"));
-            const notif = await Notification.requestPermission();
-            print("Notification Access: " + notif);
-            document.getElementById('status').innerText = "Status: Ready";
-        }
-
-        function sendTestNotif() {
-            if (Notification.permission === "granted") {
-                new Notification("SkyWatch Active", {
-                    body: "This is what a plane alert will look like!",
-                    vibrate: [200, 100, 200]
-                });
-            } else {
-                alert("Please enable alerts first.");
+        function askPermission() {
+            if (!("Notification" in window)) {
+                alert("This browser does not support desktop notification");
+                return;
             }
+
+            Notification.requestPermission().then(permission => {
+                statusDiv.innerText = "Permission: " + permission;
+                if (permission === "granted") {
+                    alert("Permission Granted! Now try the Green Button.");
+                } else {
+                    alert("Permission Denied. Check Android Site Settings.");
+                }
+            });
         }
 
-        function startTracking() {
-            print("Auto-Scan started every 60 seconds...");
-            setInterval(scanSky, 60000);
-            scanSky(); // Run once now
-        }
+        function showNotification() {
+            if (Notification.permission !== "granted") {
+                alert("Click the Blue Button first!");
+                return;
+            }
 
-        function scanSky() {
-            print("Scanning for planes...");
-            // We will add the OpenSky data pull here once you confirm 
-            // the Notification Buzzer works on your Android!
+            // Android specific: Use a Service Worker registration if available
+            // but fallback to standard Notification
+            try {
+                const options = {
+                    body: 'If you see this, the buzzer works!',
+                    vibrate: [200, 100, 200],
+                    requireInteraction: true // Keeps it on screen until you tap it
+                };
+                
+                new Notification("SkyWatch Alert", options);
+                statusDiv.innerText = "Notification Sent at " + new Date().toLocaleTimeString();
+            } catch (e) {
+                statusDiv.innerText = "Error: " + e.message;
+            }
         }
     </script>
 </body>
