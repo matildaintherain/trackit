@@ -1,121 +1,108 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Sky Radar Android</title>
+    <title>Radar Debugger</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { font-family: sans-serif; margin: 0; background: #0b0e11; color: white; overflow: hidden; }
-        #map { height: 100vh; width: 100vw; }
-        #controls {
-            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
-            z-index: 1000; background: rgba(26,29,33,0.9); padding: 15px;
-            border-radius: 15px; border: 1px solid #00cc66; width: 85%;
-            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
-        }
-        .btn { background: #00cc66; border: none; padding: 12px; width: 100%; border-radius: 8px; font-weight: bold; color: black; font-size: 16px; }
-        #status { font-size: 11px; text-align: center; margin-bottom: 8px; color: #00cc66; height: 14px; }
-        input[type=range] { width: 100%; accent-color: #00cc66; margin: 10px 0; }
+        body { font-family: monospace; margin: 0; background: #000; color: #0f0; overflow: hidden; }
+        #map { height: 50vh; width: 100vw; background: #111; }
+        #console { height: 30vh; overflow-y: auto; padding: 10px; font-size: 12px; border-top: 1px solid #0f0; background: #050505; }
+        #controls { height: 20vh; padding: 10px; background: #111; border-top: 1px solid #333; display: flex; flex-direction: column; justify-content: center; }
+        .btn { background: #0f0; color: #000; border: none; padding: 15px; font-weight: bold; border-radius: 5px; width: 100%; }
+        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #111; }
     </style>
 </head>
 <body>
 
     <div id="map"></div>
-
+    <div id="console">--- SYSTEM LOG INITIALIZED ---</div>
     <div id="controls">
-        <div id="status">System Standby</div>
-        <div style="text-align:center; font-size:13px;">Radius: <b id="radVal">20</b> km</div>
-        <input type="range" id="radius" min="5" max="100" value="20" oninput="document.getElementById('radVal').innerText=this.value">
-        <button class="btn" onclick="startRadar()">START ANDROID RADAR</button>
+        <button class="btn" onclick="runDiagnostic()">START SYSTEM</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        let map, userMarker, markers = [];
-        let knownPlanes = new Set();
-        let auth = localStorage.getItem('skyRadarAuth');
+        let map;
+        const consoleEl = document.getElementById('console');
 
-        // Setup Map
-        map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
-        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+        function print(msg) {
+            const div = document.createElement('div');
+            div.className = 'log-entry';
+            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            consoleEl.prepend(div);
+        }
 
-        async function startRadar() {
-            // 1. Handle Login
+        // Initialize Map
+        try {
+            map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
+            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+            print("Map successfully loaded.");
+        } catch(e) {
+            print("MAP ERROR: " + e.message);
+        }
+
+        async function runDiagnostic() {
+            print("Button clicked. Starting diagnostic...");
+
+            // 1. Check Permissions
+            print("Requesting Notification permission...");
+            try {
+                const perm = await Notification.requestPermission();
+                print("Notification permission: " + perm);
+            } catch(e) {
+                print("Notification Error: " + e.message);
+            }
+
+            // 2. Check GPS
+            print("Requesting GPS coordinates...");
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    print(`GPS Found: ${pos.coords.latitude.toFixed(2)}, ${pos.coords.longitude.toFixed(2)}`);
+                    map.setView([pos.coords.latitude, pos.coords.longitude], 12);
+                    fetchTest(pos.coords.latitude, pos.coords.longitude);
+                },
+                (err) => {
+                    print("GPS FAILED: " + err.message);
+                    alert("Turn on Location/GPS in Android settings!");
+                },
+                { enableHighAccuracy: true, timeout: 10000 }
+            );
+        }
+
+        async function fetchTest(lat, lon) {
+            print("Attempting to contact OpenSky API...");
+            let auth = localStorage.getItem('skyRadarAuth');
+            
             if (!auth) {
+                print("No login found. Prompting user...");
                 const u = prompt("OpenSky Username:");
                 const p = prompt("OpenSky Password:");
-                if (!u || !p) return;
+                if(!u || !p) {
+                    print("Login cancelled by user.");
+                    return;
+                }
                 auth = btoa(u + ":" + p);
                 localStorage.setItem('skyRadarAuth', auth);
             }
 
-            // 2. Request Android Notifications
-            if ("Notification" in window) {
-                const permission = await Notification.requestPermission();
-                if (permission !== "granted") alert("Please enable notifications for alerts!");
-            }
-
-            // 3. Start the loop
-            document.getElementById('status').innerText = "Initializing GPS...";
-            scan();
-            setInterval(scan, 30000); 
-        }
-
-        function scan() {
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    const lat = pos.coords.latitude;
-                    const lon = pos.coords.longitude;
-                    
-                    if (!userMarker) {
-                        map.setView([lat, lon], 12);
-                        userMarker = L.circleMarker([lat, lon], {color: '#3388ff', radius: 10, fillOpacity: 0.8}).addTo(map);
-                    } else {
-                        userMarker.setLatLng([lat, lon]);
-                    }
-                    
-                    updateData(lat, lon);
-                },
-                (err) => { document.getElementById('status').innerText = "GPS Error: " + err.message; },
-                { enableHighAccuracy: true }
-            );
-        }
-
-        async function updateData(lat, lon) {
-            const rad = document.getElementById('radius').value;
-            const offset = rad / 111;
-            const url = `https://opensky-network.org/api/states/all?lamin=${lat-offset}&lomin=${lon-offset}&lamax=${lat+offset}&lomax=${lon+offset}`;
-
+            const url = `https://opensky-network.org/api/states/all?lamin=${lat-0.2}&lomin=${lon-0.2}&lamax=${lat+0.2}&lomax=${lon+0.2}`;
+            
             try {
                 const res = await fetch(url, { headers: { 'Authorization': 'Basic ' + auth } });
-                const data = await res.json();
+                print("Server response: " + res.status);
                 
-                markers.forEach(m => map.removeLayer(m));
-                markers = [];
-
-                if (data.states) {
-                    data.states.forEach(p => {
-                        const callsign = p[1]?.trim() || "Unknown";
-                        const alt = Math.round(p[7] * 3.28);
-                        
-                        const m = L.marker([p[6], p[5]]).addTo(map).bindPopup(`<b>${callsign}</b><br>${alt} ft`);
-                        markers.push(m);
-
-                        // Android Notification Logic
-                        if (!knownPlanes.has(callsign)) {
-                            knownPlanes.add(callsign);
-                            new Notification("✈️ New Flight Overhead", {
-                                body: `Flight ${callsign} is at ${alt} feet.`,
-                                icon: 'https://cdn-icons-png.flaticon.com/512/784/784850.png',
-                                vibrate: [200, 100, 200]
-                            });
-                        }
-                    });
-                    document.getElementById('status').innerText = `Found ${data.states.length} planes.`;
-                } else {
-                    document.getElementById('status').innerText = "Sky is clear.";
+                if(res.status === 401) {
+                    print("ERROR: Login rejected (401). clearing memory.");
+                    localStorage.removeItem('skyRadarAuth');
+                    return;
                 }
-            } catch (e) { document.getElementById('status').innerText = "API/Login Error"; }
+
+                const data = await response.json();
+                print(`SUCCESS: Found ${data.states ? data.states.length : 0} planes.`);
+            } catch(e) {
+                print("FETCH ERROR: " + e.message);
+            }
         }
     </script>
 </body>
