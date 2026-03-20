@@ -1,108 +1,73 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Radar Debugger</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <title>SkyWatch PWA</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="manifest" href="manifest.json">
     <style>
-        body { font-family: monospace; margin: 0; background: #000; color: #0f0; overflow: hidden; }
-        #map { height: 50vh; width: 100vw; background: #111; }
-        #console { height: 30vh; overflow-y: auto; padding: 10px; font-size: 12px; border-top: 1px solid #0f0; background: #050505; }
-        #controls { height: 20vh; padding: 10px; background: #111; border-top: 1px solid #333; display: flex; flex-direction: column; justify-content: center; }
-        .btn { background: #0f0; color: #000; border: none; padding: 15px; font-weight: bold; border-radius: 5px; width: 100%; }
-        .log-entry { margin-bottom: 4px; border-bottom: 1px solid #111; }
+        body { font-family: sans-serif; background: #0b0e11; color: white; text-align: center; padding: 20px; }
+        .card { background: #1a1d21; padding: 20px; border-radius: 15px; border: 1px solid #00cc66; margin-bottom: 20px; }
+        button { width: 100%; padding: 15px; background: #00cc66; border: none; border-radius: 8px; font-weight: bold; margin: 10px 0; }
+        #log { font-size: 12px; color: #888; text-align: left; background: #000; padding: 10px; border-radius: 5px; height: 150px; overflow-y: auto; }
     </style>
 </head>
 <body>
 
-    <div id="map"></div>
-    <div id="console">--- SYSTEM LOG INITIALIZED ---</div>
-    <div id="controls">
-        <button class="btn" onclick="runDiagnostic()">START SYSTEM</button>
+    <h1>✈️ SkyWatch</h1>
+    
+    <div class="card">
+        <div id="status">App Status: Initializing...</div>
+        <button onclick="requestPermissions()">1. ENABLE ALERTS</button>
+        <button onclick="sendTestNotif()">2. TEST BUZZER</button>
     </div>
 
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <div class="card">
+        <h3>Tracking Settings</h3>
+        <p>Scan Radius: 10km</p>
+        <button style="background: #3388ff; color: white;" onclick="startTracking()">3. START AUTO-SCAN</button>
+    </div>
+
+    <div id="log">System Log:</div>
+
     <script>
-        let map;
-        const consoleEl = document.getElementById('console');
+        const logEl = document.getElementById('log');
+        function print(msg) { logEl.innerHTML += `<br>> ${msg}`; }
 
-        function print(msg) {
-            const div = document.createElement('div');
-            div.className = 'log-entry';
-            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            consoleEl.prepend(div);
+        // Register the Service Worker
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('sw.js')
+                .then(() => print("Service Worker Registered"))
+                .catch(err => print("SW Error: " + err));
         }
 
-        // Initialize Map
-        try {
-            map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
-            print("Map successfully loaded.");
-        } catch(e) {
-            print("MAP ERROR: " + e.message);
+        async function requestPermissions() {
+            const loc = await navigator.geolocation.getCurrentPosition(() => print("GPS Access: OK"), (e) => print("GPS Denied"));
+            const notif = await Notification.requestPermission();
+            print("Notification Access: " + notif);
+            document.getElementById('status').innerText = "Status: Ready";
         }
 
-        async function runDiagnostic() {
-            print("Button clicked. Starting diagnostic...");
-
-            // 1. Check Permissions
-            print("Requesting Notification permission...");
-            try {
-                const perm = await Notification.requestPermission();
-                print("Notification permission: " + perm);
-            } catch(e) {
-                print("Notification Error: " + e.message);
+        function sendTestNotif() {
+            if (Notification.permission === "granted") {
+                new Notification("SkyWatch Active", {
+                    body: "This is what a plane alert will look like!",
+                    vibrate: [200, 100, 200]
+                });
+            } else {
+                alert("Please enable alerts first.");
             }
-
-            // 2. Check GPS
-            print("Requesting GPS coordinates...");
-            navigator.geolocation.getCurrentPosition(
-                (pos) => {
-                    print(`GPS Found: ${pos.coords.latitude.toFixed(2)}, ${pos.coords.longitude.toFixed(2)}`);
-                    map.setView([pos.coords.latitude, pos.coords.longitude], 12);
-                    fetchTest(pos.coords.latitude, pos.coords.longitude);
-                },
-                (err) => {
-                    print("GPS FAILED: " + err.message);
-                    alert("Turn on Location/GPS in Android settings!");
-                },
-                { enableHighAccuracy: true, timeout: 10000 }
-            );
         }
 
-        async function fetchTest(lat, lon) {
-            print("Attempting to contact OpenSky API...");
-            let auth = localStorage.getItem('skyRadarAuth');
-            
-            if (!auth) {
-                print("No login found. Prompting user...");
-                const u = prompt("OpenSky Username:");
-                const p = prompt("OpenSky Password:");
-                if(!u || !p) {
-                    print("Login cancelled by user.");
-                    return;
-                }
-                auth = btoa(u + ":" + p);
-                localStorage.setItem('skyRadarAuth', auth);
-            }
+        function startTracking() {
+            print("Auto-Scan started every 60 seconds...");
+            setInterval(scanSky, 60000);
+            scanSky(); // Run once now
+        }
 
-            const url = `https://opensky-network.org/api/states/all?lamin=${lat-0.2}&lomin=${lon-0.2}&lamax=${lat+0.2}&lomax=${lon+0.2}`;
-            
-            try {
-                const res = await fetch(url, { headers: { 'Authorization': 'Basic ' + auth } });
-                print("Server response: " + res.status);
-                
-                if(res.status === 401) {
-                    print("ERROR: Login rejected (401). clearing memory.");
-                    localStorage.removeItem('skyRadarAuth');
-                    return;
-                }
-
-                const data = await response.json();
-                print(`SUCCESS: Found ${data.states ? data.states.length : 0} planes.`);
-            } catch(e) {
-                print("FETCH ERROR: " + e.message);
-            }
+        function scanSky() {
+            print("Scanning for planes...");
+            // We will add the OpenSky data pull here once you confirm 
+            // the Notification Buzzer works on your Android!
         }
     </script>
 </body>
