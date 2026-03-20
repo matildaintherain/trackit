@@ -1,139 +1,121 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Sky Radar Stealth</title>
+    <title>Sky Radar Android</title>
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        :root { --accent: #00cc66; --bg: #0b0e11; }
-        body { font-family: sans-serif; margin: 0; background: var(--bg); color: white; overflow: hidden; }
-        
-        /* Full Screen Map */
-        #map { height: 100vh; width: 100vw; z-index: 1; }
-        
-        /* Floating Minimal Controls */
-        #controlTray {
-            position: fixed; bottom: 0; left: 0; right: 0;
-            background: rgba(26, 29, 33, 0.95);
-            padding: 15px; border-top: 2px solid var(--accent);
-            z-index: 1000; transition: transform 0.3s ease;
-            text-align: center;
+        body { font-family: sans-serif; margin: 0; background: #0b0e11; color: white; overflow: hidden; }
+        #map { height: 100vh; width: 100vw; }
+        #controls {
+            position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%);
+            z-index: 1000; background: rgba(26,29,33,0.9); padding: 15px;
+            border-radius: 15px; border: 1px solid #00cc66; width: 85%;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.5);
         }
-        .tray-collapsed { transform: translateY(80%); } /* Hides most of the tray */
-
-        .toggle-btn { 
-            background: var(--accent); border: none; padding: 5px 15px; 
-            border-radius: 10px 10px 0 0; position: absolute; top: -30px; 
-            left: 50%; transform: translateX(-50%); color: black; font-weight: bold;
-        }
-
-        .btn-scan { padding: 12px; background: var(--accent); border: none; border-radius: 8px; font-weight: bold; width: 100%; color: #000; margin-top: 10px; }
-        input[type=range] { width: 100%; accent-color: var(--accent); }
-        #status { font-size: 11px; color: #888; margin-bottom: 5px; }
+        .btn { background: #00cc66; border: none; padding: 12px; width: 100%; border-radius: 8px; font-weight: bold; color: black; font-size: 16px; }
+        #status { font-size: 11px; text-align: center; margin-bottom: 8px; color: #00cc66; height: 14px; }
+        input[type=range] { width: 100%; accent-color: #00cc66; margin: 10px 0; }
     </style>
 </head>
 <body>
 
     <div id="map"></div>
-    
-    <div id="controlTray" class="">
-        <button class="toggle-btn" onclick="document.getElementById('controlTray').classList.toggle('tray-collapsed')">▲ SETTINGS ▲</button>
-        
-        <div id="status">Ready. Set radius and scan.</div>
-        
-        <div style="margin: 10px 0;">
-            <span>Alert Radius: <b id="radNum">10</b> km</span>
-            <input type="range" id="radiusInput" min="2" max="50" value="10" 
-                   oninput="document.getElementById('radNum').innerText=this.value">
-        </div>
-        
-        <button class="btn-scan" onclick="startTracking()">START RADAR & ALERTS</button>
+
+    <div id="controls">
+        <div id="status">System Standby</div>
+        <div style="text-align:center; font-size:13px;">Radius: <b id="radVal">20</b> km</div>
+        <input type="range" id="radius" min="5" max="100" value="20" oninput="document.getElementById('radVal').innerText=this.value">
+        <button class="btn" onclick="startRadar()">START ANDROID RADAR</button>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
-        let map, userMarker;
-        let planeMarkers = [];
+        let map, userMarker, markers = [];
         let knownPlanes = new Set();
-        let trackInterval;
+        let auth = localStorage.getItem('skyRadarAuth');
 
-        window.onload = function() {
-            map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
-            
-            // Auto-prompt login if not saved
-            if(!localStorage.getItem('skyRadarAuth')) {
+        // Setup Map
+        map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
+        L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+
+        async function startRadar() {
+            // 1. Handle Login
+            if (!auth) {
                 const u = prompt("OpenSky Username:");
                 const p = prompt("OpenSky Password:");
-                if(u && p) localStorage.setItem('skyRadarAuth', btoa(u + ":" + p));
+                if (!u || !p) return;
+                auth = btoa(u + ":" + p);
+                localStorage.setItem('skyRadarAuth', auth);
             }
-        };
 
-        function startTracking() {
-            // Request Notification Permission
+            // 2. Request Android Notifications
             if ("Notification" in window) {
-                Notification.requestPermission();
+                const permission = await Notification.requestPermission();
+                if (permission !== "granted") alert("Please enable notifications for alerts!");
             }
-            
-            // Minimize controls after starting
-            document.getElementById('controlTray').classList.add('tray-collapsed');
-            
-            // Run immediately then every 30s
-            runScan();
-            if(trackInterval) clearInterval(trackInterval);
-            trackInterval = setInterval(runScan, 30000);
+
+            // 3. Start the loop
+            document.getElementById('status').innerText = "Initializing GPS...";
+            scan();
+            setInterval(scan, 30000); 
         }
 
-        function runScan() {
-            navigator.geolocation.getCurrentPosition(pos => {
-                const lat = pos.coords.latitude;
-                const lon = pos.coords.longitude;
-                
-                if (!userMarker) {
-                    map.setView([lat, lon], 12);
-                    userMarker = L.circleMarker([lat, lon], {color: '#3388ff', radius: 10}).addTo(map);
-                } else {
-                    userMarker.setLatLng([lat, lon]);
-                }
-                
-                fetchData(lat, lon);
-            });
+        function scan() {
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
+                    
+                    if (!userMarker) {
+                        map.setView([lat, lon], 12);
+                        userMarker = L.circleMarker([lat, lon], {color: '#3388ff', radius: 10, fillOpacity: 0.8}).addTo(map);
+                    } else {
+                        userMarker.setLatLng([lat, lon]);
+                    }
+                    
+                    updateData(lat, lon);
+                },
+                (err) => { document.getElementById('status').innerText = "GPS Error: " + err.message; },
+                { enableHighAccuracy: true }
+            );
         }
 
-        async function fetchData(lat, lon) {
-            const km = document.getElementById('radiusInput').value;
-            const offset = km / 111;
-            const auth = localStorage.getItem('skyRadarAuth');
-            
+        async function updateData(lat, lon) {
+            const rad = document.getElementById('radius').value;
+            const offset = rad / 111;
             const url = `https://opensky-network.org/api/states/all?lamin=${lat-offset}&lomin=${lon-offset}&lamax=${lat+offset}&lomax=${lon+offset}`;
 
             try {
-                const response = await fetch(url, { headers: { 'Authorization': 'Basic ' + auth } });
-                const data = await response.json();
+                const res = await fetch(url, { headers: { 'Authorization': 'Basic ' + auth } });
+                const data = await res.json();
                 
-                planeMarkers.forEach(m => map.removeLayer(m));
-                planeMarkers = [];
+                markers.forEach(m => map.removeLayer(m));
+                markers = [];
 
                 if (data.states) {
                     data.states.forEach(p => {
-                        const callsign = p[1]?.trim() || "N/A";
+                        const callsign = p[1]?.trim() || "Unknown";
                         const alt = Math.round(p[7] * 3.28);
                         
-                        // Add to map
-                        const m = L.marker([p[6], p[5]]).addTo(map).bindPopup(callsign);
-                        planeMarkers.push(m);
+                        const m = L.marker([p[6], p[5]]).addTo(map).bindPopup(`<b>${callsign}</b><br>${alt} ft`);
+                        markers.push(m);
 
-                        // Trigger Notification for NEW planes in the circle
+                        // Android Notification Logic
                         if (!knownPlanes.has(callsign)) {
                             knownPlanes.add(callsign);
-                            if (Notification.permission === "granted") {
-                                new Notification("Flight Overhead", { body: `${callsign} at ${alt} ft` });
-                            }
+                            new Notification("✈️ New Flight Overhead", {
+                                body: `Flight ${callsign} is at ${alt} feet.`,
+                                icon: 'https://cdn-icons-png.flaticon.com/512/784/784850.png',
+                                vibrate: [200, 100, 200]
+                            });
                         }
                     });
-                    document.getElementById('status').innerText = `Active: ${data.states.length} planes in ${km}km.`;
+                    document.getElementById('status').innerText = `Found ${data.states.length} planes.`;
+                } else {
+                    document.getElementById('status').innerText = "Sky is clear.";
                 }
-            } catch (e) { document.getElementById('status').innerText = "API Error."; }
+            } catch (e) { document.getElementById('status').innerText = "API/Login Error"; }
         }
     </script>
 </body>
