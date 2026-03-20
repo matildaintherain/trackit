@@ -1,197 +1,112 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Sky Radar Elite</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Sky Radar Debug</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        :root { --accent: #00cc66; --bg: #0b0e11; --card: #1a1d21; --text: #e9ecef; }
-        body { font-family: -apple-system, sans-serif; margin: 0; background: var(--bg); color: var(--text); overflow: hidden; }
-        #loginScreen { padding: 40px; text-align: center; height: 100vh; display: flex; flex-direction: column; justify-content: center; }
-        #mainApp { display: flex; flex-direction: column; height: 100vh; position: relative; }
+        body { font-family: sans-serif; margin: 0; background: #0b0e11; color: white; text-align: center; }
+        .card { padding: 40px 20px; }
+        #debug { color: #ffcc00; font-size: 12px; margin-top: 20px; padding: 10px; background: #222; border-radius: 5px; min-height: 50px; }
+        #mainApp { display: none; height: 100vh; flex-direction: column; }
         #map { flex-grow: 1; width: 100%; }
-        
-        /* UI Components */
-        .controls { padding: 15px; background: var(--card); border-top: 2px solid var(--accent); z-index: 1000; }
-        #historyPanel { 
-            position: absolute; bottom: 0; left: 0; right: 0; height: 0; 
-            background: var(--card); z-index: 2000; transition: 0.4s cubic-bezier(0.4, 0, 0.2, 1); 
-            overflow-y: auto; border-top: 3px solid #3388ff;
-        }
-        #historyPanel.open { height: 75vh; padding: 20px; }
-        
-        /* Interactive Elements */
-        input[type=text], input[type=password] { width: 80%; padding: 12px; margin: 10px; border-radius: 8px; border: 1px solid #444; background: #000; color: white; }
-        .btn-main { padding: 15px; background: var(--accent); border: none; border-radius: 8px; font-weight: bold; width: 100%; color: #000; }
-        .btn-sec { padding: 10px; background: #3388ff; border: none; border-radius: 8px; color: white; margin-top: 8px; width: 100%; }
-        
-        /* Flight Detail Styling */
-        .detail-row { display: flex; justify-content: space-between; border-bottom: 1px solid #333; padding: 8px 0; font-size: 13px; }
-        .label { color: #888; text-transform: uppercase; font-size: 10px; }
-        .value { font-weight: bold; color: var(--accent); }
-        .popup-header { border-bottom: 2px solid var(--accent); margin-bottom: 8px; padding-bottom: 4px; font-size: 16px; }
-        
-        .hidden { display: none; }
+        input { width: 80%; padding: 12px; margin: 10px; border-radius: 8px; border: 1px solid #444; background: #000; color: white; }
+        button { padding: 15px; background: #00cc66; border: none; border-radius: 8px; font-weight: bold; width: 80%; }
     </style>
 </head>
 <body>
 
-    <div id="loginScreen">
-        <h1 style="font-size: 3rem; margin: 0;">✈️</h1>
-        <h2>Sky Radar Elite</h2>
+    <div id="loginScreen" class="card">
+        <h1>✈️ Sky Radar</h1>
         <input type="text" id="user" placeholder="OpenSky Username">
         <input type="password" id="pass" placeholder="OpenSky Password">
-        <button class="btn-main" onclick="saveAndStart()">INITIALIZE SYSTEM</button>
+        <button onclick="saveAndStart()">INITIALIZE</button>
+        <div id="debug">System Status: Waiting for Login...</div>
     </div>
 
-    <div id="mainApp" class="hidden">
+    <div id="mainApp">
         <div id="map"></div>
-        
-        <div id="historyPanel">
-            <div style="display:flex; justify-content: space-between; align-items: center; margin-bottom: 20px;">
-                <h2 style="margin:0;">Flight Log</h2>
-                <button onclick="toggleHistory()" style="background:#444; border:none; color:white; padding: 5px 15px; border-radius: 20px;">CLOSE</button>
-            </div>
-            <div id="logList"></div>
-        </div>
-
-        <div class="controls">
-            <div style="display:flex; justify-content: space-between; font-size: 11px; margin-bottom: 10px;">
-                <span id="notifStatus">NOTIFICATIONS: PENDING</span>
-                <span id="lastUpdate">SCAN: OFFLINE</span>
-            </div>
-            <div style="display:flex; gap:10px; align-items: center;">
-                <div style="flex:1;">
-                    <span style="font-size:12px;">Radius: <b id="radNum">10</b>km</span>
-                    <input type="range" id="radiusInput" min="1" max="50" value="10" style="width:100%" oninput="document.getElementById('radNum').innerText=this.value">
-                </div>
-                <button class="btn-main" onclick="getLocation()" style="width:100px;">SCAN</button>
-            </div>
-            <button class="btn-sec" onclick="toggleHistory()">OPEN LOGBOOK</button>
+        <div style="padding: 10px; background: #1a1d21;">
+            <button onclick="getLocation()" style="width: auto; padding: 10px 20px;">Manual Scan</button>
+            <div id="statusUpdate" style="font-size: 10px; margin-top: 5px;"></div>
         </div>
     </div>
 
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         let credentials = "";
-        let map, userMarker;
-        let planeMarkers = [];
-        let knownPlanes = new Set(); 
+        let map;
 
-        const planeSVG = (h) => `<svg width="30" height="30" viewBox="0 0 512 512" style="transform:rotate(${h}deg);"><path fill="#00cc66" d="M448 336v-40L288 192V72c0-39.8-32.2-72-72-72s-72 32.2-72 72v120L32 296v40l160-48v112l-48 32v40l80-24 80 24v-40l-48-32V288l160 48z"/></svg>`;
-
-        function toggleHistory() { document.getElementById('historyPanel').classList.toggle('open'); }
+        function log(msg) {
+            document.getElementById('debug').innerText = "LOG: " + msg;
+            console.log(msg);
+        }
 
         function saveAndStart() {
+            log("Button Clicked. Checking inputs...");
             const u = document.getElementById('user').value;
             const p = document.getElementById('pass').value;
-            if(!u || !p) return alert("Credentials required");
-            credentials = btoa(u + ":" + p);
             
-            if ("Notification" in window) {
-                Notification.requestPermission().then(p => {
-                    document.getElementById('notifStatus').innerText = "ALERTS: " + (p === "granted" ? "ACTIVE" : "BLOCKED");
-                });
+            if(!u || !p) {
+                log("Error: Username or Password empty.");
+                return;
             }
 
-            document.getElementById('loginScreen').classList.add('hidden');
-            document.getElementById('mainApp').classList.remove('hidden');
-            map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
-            L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
+            credentials = btoa(u + ":" + p);
+            log("Credentials encoded. Switching screens...");
+
+            document.getElementById('loginScreen').style.display = 'none';
+            document.getElementById('mainApp').style.display = 'flex';
             
-            getLocation();
-            setInterval(getLocation, 30000); 
+            try {
+                log("Initializing Map...");
+                map = L.map('map').setView([0, 0], 2);
+                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
+                log("Map ready. Requesting GPS...");
+                getLocation();
+            } catch(e) {
+                log("Map Error: " + e.message);
+            }
         }
 
         function getLocation() {
-            navigator.geolocation.getCurrentPosition(pos => {
-                const { latitude, longitude } = pos.coords;
-                if (!userMarker) {
-                    map.setView([latitude, longitude], 12);
-                    userMarker = L.circleMarker([latitude, longitude], {color: '#3388ff', radius: 8, fillOpacity: 0.8}).addTo(map);
-                }
-                userMarker.setLatLng([latitude, longitude]);
-                fetchData(latitude, longitude);
-            });
+            log("Requesting Location Access...");
+            if (!navigator.geolocation) {
+                log("Error: Geolocation not supported by browser.");
+                return;
+            }
+
+            navigator.geolocation.getCurrentPosition(
+                (pos) => {
+                    log("GPS Success! Fetching OpenSky Data...");
+                    fetchData(pos.coords.latitude, pos.coords.longitude);
+                },
+                (err) => {
+                    log("GPS Denied: " + err.message + " (Check Chrome Settings)");
+                },
+                { timeout: 10000 }
+            );
         }
 
         async function fetchData(lat, lon) {
-            const km = document.getElementById('radiusInput').value;
-            const offset = km / 111;
-            const url = `https://opensky-network.org/api/states/all?lamin=${lat-offset}&lomin=${lon-offset}&lamax=${lat+offset}&lomax=${lon+offset}`;
-
+            const url = `https://opensky-network.org/api/states/all?lamin=${lat-0.1}&lomin=${lon-0.1}&lamax=${lat+0.1}&lomax=${lon+0.1}`;
+            
             try {
-                const response = await fetch(url, { headers: { 'Authorization': 'Basic ' + credentials } });
-                const data = await response.json();
-                document.getElementById('lastUpdate').innerText = "UPDT: " + new Date().toLocaleTimeString();
-                updateMap(data.states);
-            } catch (e) { console.error("Data Fetch Error"); }
-        }
-
-        function updateMap(states) {
-            planeMarkers.forEach(m => map.removeLayer(m));
-            planeMarkers = [];
-            if (!states) return;
-
-            states.forEach(p => {
-                const flight = {
-                    icao: p[0],
-                    callsign: p[1]?.trim() || "N/A",
-                    country: p[2],
-                    lon: p[5],
-                    lat: p[6],
-                    alt: Math.round(p[7] * 3.28) || 0,
-                    velocity: Math.round(p[9] * 1.944), // m/s to Knots
-                    heading: p[10] || 0,
-                    vrate: p[11] || 0, // Vertical rate m/s
-                    squawk: p[14] || "----"
-                };
-
-                if (flight.lat && flight.lon) {
-                    const icon = L.divIcon({ html: planeSVG(flight.heading), className: 'plane-icon', iconSize: [30, 30], iconAnchor: [15, 15] });
-                    
-                    const popupContent = `
-                        <div style="color:#000; min-width:150px;">
-                            <div class="popup-header"><b>Flight ${flight.callsign}</b></div>
-                            <div class="detail-row"><span class="label">ICAO24</span><span class="value">${flight.icao.toUpperCase()}</span></div>
-                            <div class="detail-row"><span class="label">Altitude</span><span class="value">${flight.alt} ft</span></div>
-                            <div class="detail-row"><span class="label">Speed</span><span class="value">${flight.velocity} kts</span></div>
-                            <div class="detail-row"><span class="label">V-Rate</span><span class="value">${flight.vrate} m/s</span></div>
-                            <div class="detail-row"><span class="label">Squawk</span><span class="value">${flight.squawk}</span></div>
-                            <div style="font-size:9px; color:#999; margin-top:5px;">${flight.country}</div>
-                        </div>
-                    `;
-
-                    const marker = L.marker([flight.lat, flight.lon], { icon: icon }).addTo(map).bindPopup(popupContent);
-                    planeMarkers.push(marker);
-
-                    if (!knownPlanes.has(flight.icao)) {
-                        knownPlanes.add(flight.icao);
-                        addToLog(flight);
-                        if (Notification.permission === "granted") {
-                            new Notification("Aircraft Entered Zone", { body: `${flight.callsign} (${flight.country})` });
-                        }
-                    }
+                const response = await fetch(url, {
+                    headers: { 'Authorization': 'Basic ' + credentials }
+                });
+                
+                if (response.status === 401) {
+                    log("Error 401: Invalid OpenSky Login.");
+                    return;
                 }
-            });
-        }
 
-        function addToLog(f) {
-            const list = document.getElementById('logList');
-            const item = document.createElement('div');
-            item.style.marginBottom = "15px";
-            item.innerHTML = `
-                <div style="border-left:4px solid var(--accent); padding-left:10px; background:#252a2f; padding:10px; border-radius:5px;">
-                    <div style="display:flex; justify-content:space-between;">
-                        <b style="color:var(--accent)">${f.callsign}</b>
-                        <span style="font-size:10px; color:#888;">${new Date().toLocaleTimeString()}</span>
-                    </div>
-                    <div style="font-size:12px; margin-top:5px;">
-                        ${f.alt} ft | ${f.velocity} kts | ${f.country}
-                    </div>
-                </div>
-            `;
-            list.prepend(item);
+                const data = await response.json();
+                log("Success! Found " + (data.states ? data.states.length : 0) + " planes.");
+                document.getElementById('statusUpdate').innerText = "Last Update: " + new Date().toLocaleTimeString();
+            } catch (e) {
+                log("API Error: " + e.message);
+            }
         }
     </script>
 </body>
