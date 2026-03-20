@@ -1,34 +1,39 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Sky Radar Debug</title>
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Sky Radar Elite</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        body { font-family: sans-serif; margin: 0; background: #0b0e11; color: white; text-align: center; }
-        .card { padding: 40px 20px; }
-        #debug { color: #ffcc00; font-size: 12px; margin-top: 20px; padding: 10px; background: #222; border-radius: 5px; min-height: 50px; }
-        #mainApp { display: none; height: 100vh; flex-direction: column; }
+        :root { --accent: #00cc66; --bg: #0b0e11; --card: #1a1d21; --text: #e9ecef; }
+        body { font-family: -apple-system, sans-serif; margin: 0; background: var(--bg); color: var(--text); overflow: hidden; }
+        #loginScreen { padding: 40px; text-align: center; height: 100vh; display: flex; flex-direction: column; justify-content: center; align-items: center; }
+        #mainApp { display: none; flex-direction: column; height: 100vh; position: relative; }
         #map { flex-grow: 1; width: 100%; }
-        input { width: 80%; padding: 12px; margin: 10px; border-radius: 8px; border: 1px solid #444; background: #000; color: white; }
-        button { padding: 15px; background: #00cc66; border: none; border-radius: 8px; font-weight: bold; width: 80%; }
+        input[type=text], input[type=password] { width: 90%; max-width: 300px; padding: 12px; margin: 10px; border-radius: 8px; border: 1px solid #444; background: #000; color: white; }
+        .btn-main { padding: 15px; background: var(--accent); border: none; border-radius: 8px; font-weight: bold; width: 100%; max-width: 320px; color: #000; cursor: pointer; }
+        .controls { padding: 15px; background: var(--card); border-top: 2px solid var(--accent); z-index: 1000; }
+        .remember-wrap { margin: 10px 0 20px 0; font-size: 14px; color: #888; display: flex; align-items: center; gap: 8px; }
     </style>
 </head>
 <body>
 
-    <div id="loginScreen" class="card">
+    <div id="loginScreen">
         <h1>✈️ Sky Radar</h1>
         <input type="text" id="user" placeholder="OpenSky Username">
         <input type="password" id="pass" placeholder="OpenSky Password">
-        <button onclick="saveAndStart()">INITIALIZE</button>
-        <div id="debug">System Status: Waiting for Login...</div>
+        <div class="remember-wrap">
+            <input type="checkbox" id="rememberMe"> <label for="rememberMe">Remember Me</label>
+        </div>
+        <button class="btn-main" onclick="handleLogin()">INITIALIZE SYSTEM</button>
+        <p id="status" style="font-size:12px; margin-top:15px; color:#888;"></p>
     </div>
 
     <div id="mainApp">
         <div id="map"></div>
-        <div style="padding: 10px; background: #1a1d21;">
-            <button onclick="getLocation()" style="width: auto; padding: 10px 20px;">Manual Scan</button>
-            <div id="statusUpdate" style="font-size: 10px; margin-top: 5px;"></div>
+        <div class="controls">
+            <button class="btn-main" onclick="getLocation()">REFRESH RADAR</button>
+            <button onclick="logout()" style="background:none; border:none; color:#ff4444; margin-top:10px; font-size:12px; width:100%;">Logout / Clear Memory</button>
         </div>
     </div>
 
@@ -37,76 +42,73 @@
         let credentials = "";
         let map;
 
-        function log(msg) {
-            document.getElementById('debug').innerText = "LOG: " + msg;
-            console.log(msg);
-        }
+        // Check for saved login when the page loads
+        window.onload = function() {
+            const saved = localStorage.getItem('skyRadarAuth');
+            if (saved) {
+                credentials = saved;
+                startApp();
+            }
+        };
 
-        function saveAndStart() {
-            log("Button Clicked. Checking inputs...");
+        function handleLogin() {
             const u = document.getElementById('user').value;
             const p = document.getElementById('pass').value;
-            
-            if(!u || !p) {
-                log("Error: Username or Password empty.");
-                return;
-            }
+            const remember = document.getElementById('rememberMe').checked;
+
+            if(!u || !p) return alert("Please enter credentials");
 
             credentials = btoa(u + ":" + p);
-            log("Credentials encoded. Switching screens...");
 
+            if (remember) {
+                localStorage.setItem('skyRadarAuth', credentials);
+            }
+
+            startApp();
+        }
+
+        function startApp() {
             document.getElementById('loginScreen').style.display = 'none';
             document.getElementById('mainApp').style.display = 'flex';
             
-            try {
-                log("Initializing Map...");
-                map = L.map('map').setView([0, 0], 2);
-                L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png').addTo(map);
-                log("Map ready. Requesting GPS...");
-                getLocation();
-            } catch(e) {
-                log("Map Error: " + e.message);
+            if (!map) {
+                map = L.map('map', { zoomControl: false }).setView([0, 0], 2);
+                L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png').addTo(map);
             }
+            getLocation();
+        }
+
+        function logout() {
+            localStorage.removeItem('skyRadarAuth');
+            location.reload(); // Refresh the page to show login screen
         }
 
         function getLocation() {
-            log("Requesting Location Access...");
-            if (!navigator.geolocation) {
-                log("Error: Geolocation not supported by browser.");
-                return;
-            }
-
+            document.getElementById('status').innerText = "Locating...";
             navigator.geolocation.getCurrentPosition(
                 (pos) => {
-                    log("GPS Success! Fetching OpenSky Data...");
-                    fetchData(pos.coords.latitude, pos.coords.longitude);
+                    const lat = pos.coords.latitude;
+                    const lon = pos.coords.longitude;
+                    map.setView([lat, lon], 11);
+                    fetchData(lat, lon);
                 },
-                (err) => {
-                    log("GPS Denied: " + err.message + " (Check Chrome Settings)");
-                },
-                { timeout: 10000 }
+                (err) => alert("GPS Error: " + err.message),
+                { enableHighAccuracy: true, timeout: 5000 }
             );
         }
 
         async function fetchData(lat, lon) {
-            const url = `https://opensky-network.org/api/states/all?lamin=${lat-0.1}&lomin=${lon-0.1}&lamax=${lat+0.1}&lomax=${lon+0.1}`;
-            
+            const area = 0.5; 
+            const url = `https://opensky-network.org/api/states/all?lamin=${lat-area}&lomin=${lon-area}&lamax=${lat+area}&lomax=${lon+area}`;
             try {
-                const response = await fetch(url, {
-                    headers: { 'Authorization': 'Basic ' + credentials }
-                });
-                
-                if (response.status === 401) {
-                    log("Error 401: Invalid OpenSky Login.");
-                    return;
-                }
-
+                const response = await fetch(url, { headers: { 'Authorization': 'Basic ' + credentials } });
                 const data = await response.json();
-                log("Success! Found " + (data.states ? data.states.length : 0) + " planes.");
-                document.getElementById('statusUpdate').innerText = "Last Update: " + new Date().toLocaleTimeString();
-            } catch (e) {
-                log("API Error: " + e.message);
-            }
+                if (data.states) {
+                    data.states.forEach(p => {
+                        if (p[6] && p[5]) L.marker([p[6], p[5]]).addTo(map).bindPopup(p[1] || "Unknown");
+                    });
+                }
+            } catch (e) { console.error(e); }
         }
     </script>
 </body>
